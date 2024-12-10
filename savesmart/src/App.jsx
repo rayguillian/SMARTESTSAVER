@@ -200,9 +200,19 @@ function App() {
     if (userLocation) {
       const fetchStores = async () => {
         try {
+          if (!userLocation) {
+            console.log('No user location available yet');
+            return;
+          }
+
           const travelPrefs = {
             radius: preferences?.travel?.radius || 5000
           };
+
+          console.log('Fetching stores with:', {
+            userLocation,
+            travelPrefs
+          });
 
           const response = await fetch(
             `http://localhost:3000/api/nearbyStores?userLocation=${encodeURIComponent(JSON.stringify(userLocation))}&travelPreferences=${encodeURIComponent(JSON.stringify(travelPrefs))}`,
@@ -210,28 +220,29 @@ function App() {
               headers: {
                 'Accept': 'application/json',
                 'Content-Type': 'application/json'
-              },
-              credentials: 'include'
+              }
             }
           );
 
           if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            if (errorData.error?.includes('rate limit exceeded')) {
-              throw new Error('OpenAI rate limit reached. Please try again in about an hour.');
-            }
+            console.error('Server response error:', errorData);
             throw new Error(errorData.message || 'Failed to fetch nearby stores');
           }
 
           const data = await response.json();
+          console.log('Received stores:', data);
           setStores(data.stores || []);
         } catch (error) {
           console.error('Error fetching stores:', error);
           setError(error.message);
-          // Don't set location error since it's not a location-specific issue
         }
       };
-      fetchStores();
+
+      if (userLocation && preferences?.travel?.radius) {
+        console.log('Triggering store fetch with location and preferences');
+        fetchStores();
+      }
     }
   }, [userLocation, preferences]);
 

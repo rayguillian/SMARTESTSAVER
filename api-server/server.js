@@ -16,11 +16,14 @@ app.use(helmet());
 
 // Configure CORS before other middleware
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:5176'],
+  origin: ['http://localhost:5173', 'http://localhost:5174'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
+
+// Enable pre-flight requests for all routes
+app.options('*', cors());
 
 // Compression
 app.use(compression({
@@ -127,6 +130,20 @@ app.get('/', (req, res) => {
 app.get('/api/nearbyStores', async (req, res) => {
   try {
     const { userLocation, travelPreferences } = req.query;
+    if (!userLocation) {
+      return res.status(400).json({
+        error: 'Missing user location',
+        message: 'Please enable location services or provide a location'
+      });
+    }
+
+    if (!travelPreferences) {
+      return res.status(400).json({
+        error: 'Missing travel preferences',
+        message: 'Please provide travel preferences including radius'
+      });
+    }
+
     const location = JSON.parse(userLocation);
     const preferences = JSON.parse(travelPreferences);
 
@@ -135,139 +152,74 @@ app.get('/api/nearbyStores', async (req, res) => {
       return res.json({ stores: cachedStores });
     }
 
-    // Get user's location and preferences from request
-    const { userLocation, travelPreferences } = req.query;
-    
-    if (!userLocation) {
+    let radius = preferences.radius;
+    if (!radius) {
       return res.status(400).json({
-        error: 'Missing user location',
-        message: 'Please enable location services or provide a location'
-      });
-    }
-
-    // Parse user location
-    let { latitude, longitude } = JSON.parse(userLocation);
-    
-    // Get radius from travel preferences
-    let radius;
-    try {
-      if (!travelPreferences) {
-        return res.status(400).json({
-          error: 'Missing travel preferences',
-          message: 'Please provide travel preferences including radius'
-        });
-      }
-      const preferences = JSON.parse(travelPreferences);
-      if (!preferences.radius) {
-        return res.status(400).json({
-          error: 'Missing radius in travel preferences',
-          message: 'Please specify a search radius in your travel preferences'
-        });
-      }
-      radius = preferences.radius;
-    } catch (error) {
-      console.error('Error parsing travel preferences:', error);
-      return res.status(400).json({
-        error: 'Invalid travel preferences format',
-        message: 'Please provide valid travel preferences'
+        error: 'Missing radius',
+        message: 'Please provide a search radius in meters'
       });
     }
 
     console.log('Search parameters:', {
-      location: `${latitude},${longitude}`,
+      location: `${location.latitude},${location.longitude}`,
       radius,
       type: 'grocery_or_supermarket'
     });
-
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-  
-    if (!apiKey) {
-      return res.status(500).json({ 
-        error: 'Server configuration error: Missing API key' 
-      });
-    }
 
     const response = await axios.get(
       'https://maps.googleapis.com/maps/api/place/nearbysearch/json',
       {
         params: {
-          location: `${latitude},${longitude}`,
+          location: `${location.latitude},${location.longitude}`,
           radius: radius,
           type: 'grocery_or_supermarket',
-          language: 'da', // Danish language
-          region: 'dk', // Denmark region
-          key: apiKey
+          language: 'da',
+          key: process.env.GOOGLE_MAPS_API_KEY
         }
       }
     );
 
     if (!response.data.results || response.data.results.length === 0) {
-      // If no results, return fallback stores based on closest city
-      const fallbackCity = findNearestCity({ latitude, longitude });
+      const fallbackCity = findNearestCity(location);
       return res.json({
         stores: fallbackStores[fallbackCity],
         total: fallbackStores[fallbackCity].length,
-        isFallback: true
+        fallback: true
       });
     }
 
-    const filteredResults = response.data.results.filter(store =>
+    const filteredResults = response.data.results.filter(store => 
       danishSupermarkets.some(chain => 
-        chain.variations.some(variation =>
-          store.name.toLowerCase().includes(variation.toLowerCase())
-        )
+        store.name.toLowerCase().includes(chain.name.toLowerCase())
       )
     );
 
     if (filteredResults.length === 0) {
-      // If no Danish supermarkets found, return fallback stores
-      const fallbackCity = findNearestCity({ latitude, longitude });
+      const fallbackCity = findNearestCity(location);
       return res.json({
         stores: fallbackStores[fallbackCity],
         total: fallbackStores[fallbackCity].length,
-        isFallback: true
+        fallback: true
       });
     }
 
-    // Add chain information to each store
-    const enhancedResults = filteredResults.map(store => {
-      const chain = danishSupermarkets.find(chain =>
-        chain.variations.some(variation =>
-          store.name.toLowerCase().includes(variation.toLowerCase())
-        )
-      );
-      return {
-        ...store,
-        chain: chain ? chain.name : null
-      };
+    mcache.put(
+      `stores_${location.latitude}_${location.longitude}`,
+      filteredResults,
+      1800000 // 30 minutes cache
+    );
+
+    return res.json({
+      stores: filteredResults,
+      total: filteredResults.length,
+      fallback: false
     });
 
-    mcache.put(`stores_${location.latitude}_${location.longitude}`, enhancedResults, 3600 * 1000); // 1 hour cache
-    res.json({
-      stores: enhancedResults,
-      total: enhancedResults.length,
-      isFallback: false
-    });
-    
   } catch (error) {
-    console.error('Store API Error:', error);
-    // Return fallback nearby stores
-    res.json({
-      message: "Using cached store data due to temporary API limitations",
-      stores: [
-        {
-          name: "Local Supermarket",
-          distance: "0.5 km",
-          address: "123 Main St",
-          rating: 4.5
-        },
-        {
-          name: "Grocery Store",
-          distance: "1.0 km",
-          address: "456 Market St",
-          rating: 4.2
-        }
-      ]
+    console.error('Error in /api/nearbyStores:', error);
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: error.message
     });
   }
 });
