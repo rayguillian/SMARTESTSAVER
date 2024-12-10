@@ -255,6 +255,12 @@ function App() {
 
     try {
       await updatePreferences({ cuisine: data });
+      
+      // Log the cuisine preferences to Firebase
+      await logToFirebase('cuisinePreferences', data);
+      
+      // Navigate to dietary preferences page
+      navigate('/preferences/dietary');
     } catch (error) {
       console.error('Error saving preferences:', error);
       if (error.code === 'not-found') {
@@ -263,6 +269,7 @@ function App() {
           await setDoc(doc(db, 'users', user.uid, 'preferences', 'settings'), {
             cuisine: data
           });
+          navigate('/preferences/dietary');
         } catch (setDocError) {
           console.error('Error creating preferences document:', setDocError);
         }
