@@ -9,52 +9,74 @@ import { cn } from "../../lib/utils";
 import { mealService } from "../../services/mealService";
 import { apiClient } from '../../config/api';
 import { unifiedCacheService } from '../../services/unifiedCacheService';
+import { openaiService } from '../../services/openaiService';
 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const MEALS_COUNT = 4;
 
-const parseMealSuggestions = (suggestions) => {
-  // If it's already an array of objects with required fields, return it
-  if (Array.isArray(suggestions) && suggestions.length > 0 && 
-      suggestions.every(meal => 
-        meal && 
-        typeof meal === 'object' && 
-        typeof meal.name === 'string' &&
-        typeof meal.description === 'string' &&
-        Array.isArray(meal.ingredients)
-      )) {
-    return suggestions;
+const DEFAULT_MEALS = [
+  {
+    name: 'Default Meal 1',
+    description: 'This is a default meal',
+    ingredients: ['Ingredient 1', 'Ingredient 2'],
+    preparationTime: 30,
+    estimatedCost: 15
+  },
+  {
+    name: 'Default Meal 2',
+    description: 'This is another default meal',
+    ingredients: ['Ingredient 3', 'Ingredient 4'],
+    preparationTime: 30,
+    estimatedCost: 15
+  },
+  {
+    name: 'Default Meal 3',
+    description: 'This is yet another default meal',
+    ingredients: ['Ingredient 5', 'Ingredient 6'],
+    preparationTime: 30,
+    estimatedCost: 15
+  },
+  {
+    name: 'Default Meal 4',
+    description: 'This is the last default meal',
+    ingredients: ['Ingredient 7', 'Ingredient 8'],
+    preparationTime: 30,
+    estimatedCost: 15
   }
+];
 
-  // If it's a string, try to parse it
-  if (typeof suggestions === 'string') {
+const parseMealSuggestions = (suggestions) => {
+  console.log('Parsing Meal Suggestions:', JSON.stringify(suggestions, null, 2));
+
+  // Direct parsing of OpenAI response
+  if (suggestions && suggestions.choices && suggestions.choices.length > 0) {
     try {
-      const parsed = JSON.parse(suggestions);
-      if (Array.isArray(parsed)) {
-        // Validate the structure of each meal object
-        const validMeals = parsed.filter(meal => 
-          meal && 
-          typeof meal === 'object' && 
-          typeof meal.name === 'string' &&
-          typeof meal.description === 'string' &&
-          Array.isArray(meal.ingredients)
-        );
-        
-        if (validMeals.length > 0) return validMeals;
-        console.error('No valid meals found in response');
-      }
-    } catch (e) {
-      console.error('Failed to parse meal suggestions:', e, '\nReceived:', suggestions);
+      const content = suggestions.choices[0].message.content;
+      console.log('Parsing Content:', content);
+      
+      const parsed = JSON.parse(content);
+      console.log('Parsed Meals:', JSON.stringify(parsed, null, 2));
+      
+      return parsed;
+    } catch (error) {
+      console.error('Parsing Error:', error);
+      return null;
     }
   }
 
-  return null; // Return null instead of empty array to indicate parsing failure
+  // Fallback for direct array
+  if (Array.isArray(suggestions)) {
+    return suggestions;
+  }
+
+  console.error('Invalid Suggestions Format');
+  return null;
 };
 
 const MealSelection = () => {
   const [meals, setMeals] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const { preferences, updatePreferences } = useUserPreferences();
   const { user } = useAuth();
@@ -69,61 +91,75 @@ const MealSelection = () => {
 
   const loadMealSuggestions = async () => {
     try {
-      setLoading(true);
-      setError(null);
-
-      const suggestions = await mealService.getMealSuggestions(preferences, MEALS_COUNT);
+      setIsLoading(true);
+      const suggestions = await openaiService.getMealSuggestions(preferences);
       
+      console.log('Received meal suggestions:', suggestions);
+      
+      // Use the new parseMealSuggestions function
       const parsedMeals = parseMealSuggestions(suggestions);
       
-      // Only update meals if we successfully parsed the suggestions
-      if (parsedMeals) {
+      if (parsedMeals && parsedMeals.length > 0) {
+        // Prioritize parsed AI-generated meals
         setMeals(parsedMeals);
         unifiedCacheService.setLocalCache('mealSuggestions', parsedMeals);
-      } else if (meals.length === 0) {
-        // Only set error if we don't have any existing meals
-        throw new Error('Failed to get valid meal suggestions');
+      } else {
+        console.warn('No AI meal suggestions received');
+        // If no AI suggestions, use existing meal selection logic
+        const defaultMeals = await mealService.getDefaultMeals(preferences);
+        setMeals(defaultMeals);
       }
     } catch (error) {
       console.error('Error loading meal suggestions:', error);
-      setError('Failed to load meal suggestions. Please try again.');
-      // Keep existing meals if we have them
+      
+      // Fallback to default meals from meal service
+      const defaultMeals = await mealService.getDefaultMeals(preferences);
+      setMeals(defaultMeals);
+      
+      // Optional: show user-friendly error message
+      setError('Unable to load meal suggestions. Using default meals.');
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   const handleRefresh = async () => {
     try {
-      setLoading(true);
-      setError(null);
+      setIsLoading(true);
+      const suggestions = await openaiService.getMealSuggestions(preferences);
       
-      const suggestions = await mealService.getMealSuggestions({
-        ...preferences,
-        forceFresh: true
-      }, MEALS_COUNT);
+      console.log('Received meal suggestions:', suggestions);
       
+      // Use the new parseMealSuggestions function
       const parsedMeals = parseMealSuggestions(suggestions);
       
-      // Only update meals if we successfully parsed the suggestions
-      if (parsedMeals) {
+      if (parsedMeals && parsedMeals.length > 0) {
+        // Prioritize parsed AI-generated meals
         setMeals(parsedMeals);
         unifiedCacheService.setLocalCache('mealSuggestions', parsedMeals);
       } else {
-        throw new Error('Failed to get valid meal suggestions');
+        console.warn('No AI meal suggestions received');
+        // If no AI suggestions, use existing meal selection logic
+        const defaultMeals = await mealService.getDefaultMeals(preferences);
+        setMeals(defaultMeals);
       }
     } catch (error) {
       console.error('Error refreshing meals:', error);
-      setError('Failed to refresh meals. Please try again.');
-      // Keep existing meals on refresh error
+      
+      // Fallback to default meals from meal service
+      const defaultMeals = await mealService.getDefaultMeals(preferences);
+      setMeals(defaultMeals);
+      
+      // Optional: show user-friendly error message
+      setError('Unable to refresh meals. Using default meals.');
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   const handleMealSelect = async (selectedMeal) => {
     try {
-      setLoading(true);
+      setIsLoading(true);
       // Update preferences with selected meal and ingredients
       await updatePreferences({
         ...preferences,
@@ -140,11 +176,11 @@ const MealSelection = () => {
       console.error('Error selecting meal:', error);
       setError('Failed to save meal selection. Please try again.');
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
-  if (loading && meals.length === 0) {
+  if (isLoading && meals.length === 0) {
     return (
       <Card className="w-full max-w-4xl mx-auto">
         <CardContent className="pt-6 flex justify-center items-center min-h-[400px]">
@@ -176,9 +212,9 @@ const MealSelection = () => {
           <Button 
             variant="outline" 
             onClick={handleRefresh}
-            disabled={loading}
+            disabled={isLoading}
           >
-            {loading ? <Spinner className="w-4 h-4" /> : 'New Suggestions'}
+            {isLoading ? <Spinner className="w-4 h-4" /> : 'New Suggestions'}
           </Button>
         </CardHeader>
         <CardContent>

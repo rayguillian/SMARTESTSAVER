@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: '../savesmart/.env' });
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -10,6 +10,31 @@ const helmet = require('helmet');
 const { body, validationResult } = require('express-validator');
 const app = express();
 const port = 3000;
+
+// Validate OpenAI API Key at startup
+const openaiApiKey = process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY;
+
+if (!openaiApiKey) {
+  console.error('===== CRITICAL ERROR =====');
+  console.error('OPENAI API KEY IS NOT SET!');
+  console.error('Please set OPENAI_API_KEY or VITE_OPENAI_API_KEY in your .env file');
+  console.error('You can get an API key at: https://platform.openai.com/account/api-keys');
+  console.error('Exiting application...');
+  process.exit(1);
+}
+
+if (!openaiApiKey.startsWith('sk-')) {
+  console.error('===== CRITICAL ERROR =====');
+  console.error('INVALID OPENAI API KEY FORMAT!');
+  console.error('API key must start with "sk-"');
+  console.error('Please check your API key and ensure it is correct');
+  console.error('Exiting application...');
+  process.exit(1);
+}
+
+const openai = new OpenAI({
+  apiKey: openaiApiKey
+});
 
 // Security headers
 app.use(helmet());
@@ -65,11 +90,6 @@ const cacheMiddleware = (duration) => {
     }
   };
 };
-
-// OpenAI configuration
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
 
 // Danish supermarkets list with variations
 const danishSupermarkets = [
@@ -281,42 +301,62 @@ app.post('/api/user/preferences', (req, res) => {
   res.json({ success: true });
 });
 
-// OpenAI chat endpoint
+// OpenAI Chat Route
 app.post('/api/openai/chat', async (req, res) => {
+  console.log('===== OPENAI CHAT ROUTE DEBUG =====');
+  console.log('Request Body:', JSON.stringify(req.body, null, 2));
+  console.log('OpenAI API Key:', process.env.VITE_OPENAI_API_KEY ? 'Key Present' : 'NO KEY');
+
   try {
-    console.log('Received OpenAI chat request:', req.body);
-    
     const { messages } = req.body;
+
     if (!messages || !Array.isArray(messages)) {
-      return res.status(400).json({
-        error: 'Invalid request format',
-        message: 'Messages array is required'
+      console.error('VALIDATION ERROR: Invalid messages');
+      return res.status(400).json({ 
+        error: 'Invalid request', 
+        message: 'Messages must be a non-empty array' 
       });
     }
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: messages,
-      temperature: 0.7,
-      max_tokens: 1000
-    });
+    try {
+      console.log('Attempting OpenAI API Call');
 
-    console.log('OpenAI response received');
-    res.json(completion);
+      const completion = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: messages,
+        max_tokens: 1000,
+        temperature: 0.7,
+        response_format: { type: "json_object" }
+      });
+
+      console.log('===== OPENAI COMPLETION =====');
+      console.log(JSON.stringify(completion, null, 2));
+
+      res.json(completion);
+    } catch (openaiError) {
+      console.error('===== OPENAI API ERROR =====', {
+        message: openaiError.message,
+        status: openaiError.status,
+        code: openaiError.code,
+        type: openaiError.type,
+        details: openaiError.response ? JSON.stringify(openaiError.response.data, null, 2) : 'No response data'
+      });
+
+      res.status(500).json({
+        error: 'OpenAI Service Error',
+        message: openaiError.message || 'An error occurred while processing your request',
+        details: {
+          type: openaiError.type,
+          code: openaiError.code,
+          status: openaiError.status
+        }
+      });
+    }
   } catch (error) {
-    console.error('OpenAI chat error:', error);
-    
-    if (error.response?.status === 429 || error.message.includes('rate limit')) {
-      return res.status(429).json({
-        error: 'rate_limit_exceeded',
-        message: 'Rate limit exceeded. Please try again later.',
-        retryAfter: 3600
-      });
-    }
-
+    console.error('===== UNEXPECTED SERVER ERROR =====', error);
     res.status(500).json({
-      error: 'openai_error',
-      message: error.message
+      error: 'Internal Server Error',
+      message: error.message || 'An unexpected error occurred'
     });
   }
 });
