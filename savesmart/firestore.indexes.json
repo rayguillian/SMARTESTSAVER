@@ -1,0 +1,19 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "mealSuggestionCache",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "preferenceHash",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "timestamp",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -1,0 +1,14 @@
+{
+  "name": "smartestsaver",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "concurrently --kill-others-on-fail --prefix \"[{name}]\" --names \"FRONTEND,BACKEND\" \"npm run start:frontend\" \"npm run start:backend\"",
+    "start:frontend": "cd savesmart && npm run dev",
+    "start:backend": "cd api-server && npm start",
+    "dev": "npm run start",
+    "install:all": "npm install && cd savesmart && npm install && cd ../api-server && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
